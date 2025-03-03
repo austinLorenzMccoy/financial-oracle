@@ -1,0 +1,4 @@
+.env/
+venv/
+stock_advisor.log
+.env
