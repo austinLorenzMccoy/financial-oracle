@@ -41,7 +41,8 @@ THEME = gr.themes.Soft(
     block_background_fill="#f8fafc"
 )
 
-async def check_system_status(force: bool = False) -> dict:
+# Modified to return a regular dict, not a coroutine
+def check_system_status(force: bool = False) -> dict:
     """Check and cache system status with rate limiting"""
     global last_status_check, system_status
     
@@ -90,7 +91,8 @@ async def websocket_chat_handler(question: str, conversation_id: str) -> str:
     except Exception as e:
         return f"Connection error: {str(e)}", conversation_id
 
-async def get_stock_news(stock_symbol: str) -> str:
+# Modified to make this function non-async and use regular requests
+def get_stock_news(stock_symbol: str) -> str:
     """Retrieve and format stock news with caching"""
     stock_symbol = stock_symbol.upper()
     cached = news_cache.get(stock_symbol)
@@ -177,6 +179,7 @@ def update_chat_history(conversation_id: str) -> str:
     
     return f"<div class='chat-history'>{''.join(html)}</div>"
 
+# Modified to handle async/sync behavior properly
 async def handle_chat_submit(question: str, conversation_id: str):
     """Handle chat message submission"""
     if not question.strip():
@@ -290,7 +293,7 @@ def create_interface():
             [stock_chart, news_display]
         )
         
-        # Initialization
+        # Initialization - Fixed to use synchronous function
         app.load(
             lambda: format_status_html(check_system_status()),
             outputs=status_display

@@ -22,6 +22,8 @@ from langchain.chains.combine_documents.stuff import create_stuff_documents_chai
 from langchain.prompts import ChatPromptTemplate
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_core.runnables import RunnablePassthrough, RunnableLambda
+from operator import itemgetter
 
 # Constants
 CHUNK_SIZE = 512
@@ -267,8 +269,6 @@ class WebScraper:
             logger.error(f"Error scraping MarketWatch for {stock_symbol}: {str(e)}")
             return []
             
-
-    # Modify the _fetch_url method in the WebScraper class
     async def _fetch_url(self, url: str) -> Optional[str]:
         """Fetch URL content with error handling and retries."""
         max_retries = 3
@@ -276,7 +276,7 @@ class WebScraper:
         
         for attempt in range(max_retries):
             try:
-                # Replace asyncio.timeout with async_timeout.timeout
+                # Using async_timeout.timeout for timeout
                 async with async_timeout.timeout(10):
                     # Using requests in an async function, properly wrapped
                     response_text = await asyncio.to_thread(
@@ -328,7 +328,6 @@ class StockAdvisorRAG:
             logger.error(f"Failed to initialize empty vector store: {str(e)}")
             raise
     
-   
     def _create_rag_chain(self):
         """Create the RAG chain for stock advice."""
         # Define the prompt template
@@ -357,13 +356,20 @@ class StockAdvisorRAG:
         # Create document chain
         document_chain = create_stuff_documents_chain(self.llm, prompt)
         
-        # Create modern retrieval chain
-        return document_chain | {
-            "input": lambda x: x["input"],
-            "current_date": lambda x: x["current_date"],
-            "context": self.vectorstore.as_retriever()
-        }
-
+        # Create retriever
+        retriever = self.vectorstore.as_retriever()
+        
+        # Define format function to properly structure inputs
+        def format_docs(docs):
+            return "\n\n".join(doc.page_content for doc in docs)
+        
+        # Build the RAG chain with the correct structure
+        rag_chain = (
+            {"context": retriever | format_docs, "input": RunnablePassthrough(), "current_date": RunnablePassthrough()}
+            | document_chain
+        )
+        
+        return rag_chain
         
     async def update_vectorstore(self, news_items: List[StockNewsItem]):
         """Update the vector store with news items."""
@@ -432,14 +438,7 @@ class StockAdvisorRAG:
                         self.retrieval_chain.invoke,
                         {"input": enhanced_query, "current_date": current_date}
                     )
-                    # Extract answer from the new response structure
-                    if isinstance(response, dict) and "answer" in response:
-                        return response["answer"].strip()
-                    elif isinstance(response, str):
-                        return response.strip()
-                    else:
-                        # Fallback if structure is unexpected
-                        return str(response).strip()
+                    return response
                 else:
                     raise ValueError("Retrieval chain not initialized")
                     
@@ -491,7 +490,7 @@ class FinancialAdviceSystem:
         # Background tasks
         self.background_tasks = set()
         
-    def start(self):
+    async def start(self):  # Make this async
         """Start the financial advice system."""
         logger.info("Starting Financial Advice System")
         
@@ -499,7 +498,7 @@ class FinancialAdviceSystem:
         self._create_background_task(self.scrape_all_stocks())
         
         # Schedule periodic tasks
-        asyncio.create_task(self._schedule_tasks())
+        self._create_background_task(self._schedule_tasks())
         
     async def _schedule_tasks(self):
         """Schedule and run periodic tasks."""
@@ -520,7 +519,7 @@ class FinancialAdviceSystem:
         task.add_done_callback(self.background_tasks.discard)
     
     async def scrape_all_stocks(self):
-        """Scrape news for all supported stocks."""
+        """Scrape news for all supported stocks with enhanced error handling."""
         logger.info("Starting news scraping for all stocks")
         all_news = []
         
@@ -531,11 +530,34 @@ class FinancialAdviceSystem:
         for i in range(0, len(tasks), 3):
             batch_results = await asyncio.gather(*tasks[i:i+3], return_exceptions=True)
             
-            for result in batch_results:
+            for j, result in enumerate(batch_results):
+                stock_idx = i + j
+                stock = list(SUPPORTED_STOCKS)[stock_idx] if stock_idx < len(SUPPORTED_STOCKS) else "Unknown"
+                
                 if isinstance(result, Exception):
-                    logger.error(f"Error in scraping task: {str(result)}")
+                    logger.error(f"Error scraping {stock}: {str(result)}")
+                    # Add a fallback news item if scraping fails
+                    all_news.append(StockNewsItem(
+                        stock_symbol=stock,
+                        title=f"Latest market trends for {stock}",
+                        content=f"This is a placeholder for {stock} news. The system was unable to scrape real-time news at this moment.",
+                        source="System Fallback",
+                        url=f"https://finance.yahoo.com/quote/{stock}"
+                    ))
                 elif isinstance(result, list):
-                    all_news.extend(result)
+                    if result:
+                        all_news.extend(result)
+                        logger.info(f"Successfully scraped {len(result)} news items for {stock}")
+                    else:
+                        logger.warning(f"No news found for {stock}, adding fallback")
+                        # Add a fallback news item if no news found
+                        all_news.append(StockNewsItem(
+                            stock_symbol=stock,
+                            title=f"Latest market trends for {stock}",
+                            content=f"No recent news was found for {stock}. Consider checking major financial news sources for the latest updates.",
+                            source="System Notice",
+                            url=f"https://finance.yahoo.com/quote/{stock}"
+                        ))
             
             # Brief pause between batches
             await asyncio.sleep(2)
@@ -545,7 +567,20 @@ class FinancialAdviceSystem:
             await self.rag_system.update_vectorstore(all_news)
             logger.info(f"Completed scraping with {len(all_news)} total news items")
         else:
-            logger.warning("No news items found during scraping")
+            logger.warning("No news items found during scraping. Adding fallback data.")
+            # Add fallback data for all stocks if no news was found at all
+            fallback_news = []
+            for stock in SUPPORTED_STOCKS:
+                fallback_news.append(StockNewsItem(
+                    stock_symbol=stock,
+                    title=f"Market overview for {stock}",
+                    content=f"The system is currently unable to retrieve latest news for {stock}. Please try again later or check major financial news sources.",
+                    source="System Fallback",
+                    url=f"https://finance.yahoo.com/quote/{stock}"
+                ))
+            await self.news_repository.add_news(fallback_news)
+            await self.rag_system.update_vectorstore(fallback_news)
+            logger.info(f"Added {len(fallback_news)} fallback news items")
     
     def extract_stock_symbols(self, query: str) -> Set[str]:
         """Extract mentioned stock symbols from the query."""
@@ -607,22 +642,24 @@ class FinancialAdviceSystem:
             self.add_message_to_conversation(conversation_id, MessageRole.ASSISTANT, error_msg)
             return error_msg
     
-    async def get_stock_news(self, stock_symbol: str) -> List[dict]:
+    def get_stock_news(self, stock_symbol: str) -> List[dict]:
         """Get news for a specific stock symbol."""
         if stock_symbol not in SUPPORTED_STOCKS:
             return []
         
-        news_items = await self.news_repository.get_news_for_stock(stock_symbol)
-        return [
-            {
-                "title": item.title,
-                "content": item.content,
-                "source": item.source,
-                "url": item.url,
-                "timestamp": item.timestamp.isoformat()
-            }
-            for item in news_items
-        ]
+        # Convert to sync version for API compatibility
+        news_items = []
+        for item in self.news_repository.news_data:
+            if item.stock_symbol == stock_symbol:
+                news_items.append({
+                    "title": item.title,
+                    "content": item.content,
+                    "source": item.source,
+                    "url": item.url,
+                    "timestamp": item.timestamp.isoformat()
+                })
+        
+        return news_items
 
 
 # Global instance
@@ -640,7 +677,6 @@ async def main():
     """Main entry point for testing."""
     # Initialize the system
     system = get_financial_advice_system()
-    system.start()
     
     # Wait for initial data scraping
     print("Waiting for initial data scraping...")

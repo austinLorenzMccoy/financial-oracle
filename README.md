@@ -43,7 +43,7 @@ To invoke the powers of the oracle, follow these steps:
 
 1. **Clone the Repository**:
    ```bash
-   git clone https://github.com/yourusername/financial-oracle.git
+   git clone https://github.com/austinLorenzMccoy/financial-oracle.git
    cd financial-oracle
    ```
 2. **Install Dependencies**:

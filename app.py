@@ -7,12 +7,25 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depe
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from datetime import datetime
+from contextlib import asynccontextmanager
 
 from main import get_financial_advice_system, MessageRole, SUPPORTED_STOCKS
 
-# Initialize FastAPI app
-app = FastAPI(title="Stock Trading Advisor", 
-             description="RAG-based financial advice system for stock trading")
+# Lifespan management
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize and start the financial advice system
+    advisor = get_financial_advice_system()
+    await advisor.start()  # Start background tasks
+    yield
+    # Cleanup logic can be added here if needed
+
+# Initialize FastAPI app with lifespan
+app = FastAPI(
+    title="Stock Trading Advisor", 
+    description="RAG-based financial advice system for stock trading",
+    lifespan=lifespan
+)
 
 # Add CORS middleware
 app.add_middleware(
@@ -135,29 +148,57 @@ async def get_system_status(advisor = Depends(get_advisor)):
 async def websocket_chat(websocket: WebSocket, conversation_id: str, advisor = Depends(get_advisor)):
     """WebSocket endpoint for real-time chat with the financial advisor."""
     await websocket.accept()
-    await websocket.send_text(f"Welcome to the Stock Trading Advisor! Ask me about {', '.join(SUPPORTED_STOCKS)} stocks.")
     
     try:
+        # Send welcome message
+        await websocket.send_json({
+            "type": "welcome",
+            "message": f"Welcome to the Stock Trading Advisor! Ask me about {', '.join(SUPPORTED_STOCKS)} stocks."
+        })
+        
         while True:
-            message = await websocket.receive_text()
+            # Receive message
+            data = await websocket.receive_text()
             
             # Check for exit messages
-            if message.lower() in {"exit", "quit", "bye", "goodbye"}:
-                await websocket.send_text("Thank you for using Stock Trading Advisor. Goodbye!")
+            if data.lower() in {"exit", "quit", "bye", "goodbye"}:
+                await websocket.send_json({
+                    "type": "message",
+                    "message": "Thank you for using Stock Trading Advisor. Goodbye!"
+                })
                 break
             
+            # Log received message
+            logging.info(f"Received message from {conversation_id}: {data}")
+            
             # Generate response
-            response = await advisor.generate_response(message, conversation_id)
-            await websocket.send_text(response)
+            try:
+                response = await advisor.generate_response(data, conversation_id)
+                await websocket.send_json({
+                    "type": "message",
+                    "message": response
+                })
+            except Exception as e:
+                logging.error(f"Error generating response: {str(e)}")
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "I'm sorry, an error occurred while processing your request."
+                })
+                
     except WebSocketDisconnect:
         logging.info(f"WebSocket disconnected for conversation {conversation_id}")
     except Exception as e:
         logging.error(f"Error in WebSocket: {str(e)}")
-        await websocket.send_text("I'm sorry, an error occurred. Please try again later.")
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": "An unexpected error occurred. Please try again later."
+            })
+        except:
+            # If we can't send the error message, the connection is probably already closed
+            pass
 
 # For testing and development
 if __name__ == "__main__":
     import uvicorn
-    # Initialize the system before starting the server
-    get_financial_advice_system()
     uvicorn.run(app, host="0.0.0.0", port=8000)
