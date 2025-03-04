@@ -1,4 +1,5 @@
 import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false" 
 import logging
 import asyncio
 import async_timeout
@@ -270,30 +271,23 @@ class WebScraper:
             return []
             
     async def _fetch_url(self, url: str) -> Optional[str]:
-        """Fetch URL content with error handling and retries."""
+        """Fetch URL content with error handling and retries using aiohttp."""
         max_retries = 3
         retry_delay = 2  # seconds
+        timeout = aiohttp.ClientTimeout(total=10)
         
-        for attempt in range(max_retries):
-            try:
-                # Using async_timeout.timeout for timeout
-                async with async_timeout.timeout(10):
-                    # Using requests in an async function, properly wrapped
-                    response_text = await asyncio.to_thread(
-                        self._make_request, url
-                    )
-                    return response_text
-            except asyncio.TimeoutError:
-                logger.warning(f"Timeout fetching {url} (attempt {attempt+1}/{max_retries})")
-            except Exception as e:
-                logger.warning(f"Error fetching {url}: {str(e)} (attempt {attempt+1}/{max_retries})")
+        async with aiohttp.ClientSession(headers=self.headers, timeout=timeout) as session:
+            for attempt in range(max_retries):
+                try:
+                    async with session.get(url) as response:
+                        response.raise_for_status()
+                        return await response.text()
+                except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                    logger.warning(f"Error fetching {url}: {str(e)} (attempt {attempt+1}/{max_retries})")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(retry_delay)
+            return None
             
-            if attempt < max_retries - 1:
-                await asyncio.sleep(retry_delay)
-        
-        logger.error(f"Failed to fetch {url} after {max_retries} attempts")
-        return None
-        
     def _make_request(self, url: str) -> str:
         """Make an HTTP request using requests library."""
         response = requests.get(url, headers=self.headers, timeout=10)
@@ -438,7 +432,7 @@ class StockAdvisorRAG:
                         self.retrieval_chain.invoke,
                         {"input": enhanced_query, "current_date": current_date}
                     )
-                    return response
+                    return response.content  # Extract content from AIMessage
                 else:
                     raise ValueError("Retrieval chain not initialized")
                     
