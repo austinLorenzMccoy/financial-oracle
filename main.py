@@ -301,7 +301,7 @@ class StockAdvisorRAG:
     def __init__(self, groq_api_key: str):
         self.groq_api_key = groq_api_key
         self.llm = ChatGroq(groq_api_key=groq_api_key, model_name="Llama3-8b-8192")
-        self.embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+        self.embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2", model_kwargs={"device": "cpu"})
         self.vectorstore = None
         self.retrieval_chain = None
         
