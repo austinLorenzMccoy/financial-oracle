@@ -6,6 +6,7 @@ import async_timeout
 import schedule
 import time
 import uuid
+import aiohttp
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set
 from enum import Enum
@@ -114,11 +115,20 @@ class NewsRepository:
             self.news_data.extend(news_items)
             logger.info(f"Added {len(news_items)} news items to repository")
     
-    async def get_news_for_stock(self, stock_symbol: str) -> List[StockNewsItem]:
-        """Get news items for a specific stock."""
-        async with self._lock:
-            return [item for item in self.news_data if item.stock_symbol == stock_symbol]
-    
+    async def get_stock_news(self, stock_symbol: str) -> List[dict]:
+        try:
+            news_items = await self.news_repository.get_news_for_stock(stock_symbol)
+            return [{
+                "title": item.title,
+                "content": item.content,
+                "source": item.source,
+                "url": item.url,
+                "timestamp": item.timestamp.isoformat()
+            } for item in news_items]
+        except Exception as e:
+            logger.error(f"Error retrieving news: {e}")
+            return []
+        
     async def get_all_news(self) -> List[StockNewsItem]:
         """Get all news items."""
         async with self._lock:

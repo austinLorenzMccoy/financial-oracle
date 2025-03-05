@@ -2,3 +2,5 @@
 venv/
 stock_advisor.log
 .env
+__pycache__
+.gradio/

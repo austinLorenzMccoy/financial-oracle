@@ -23,3 +23,18 @@ numpy
 faiss-cpu
 async-timeout>=4.0.3
 aiohttp>=3.9.3
+
+
+# Core dependencies
+huggingface_hub
+nltk
+
+# Media interaction dependencies
+SpeechRecognition
+pyttsx3
+sounddevice
+soundfile
+textblob
+matplotlib
+torch
+transformers
