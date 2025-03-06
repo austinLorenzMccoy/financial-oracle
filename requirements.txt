@@ -38,3 +38,7 @@ textblob
 matplotlib
 torch
 transformers
+librosa
+wave
+opencv-python
+pillow

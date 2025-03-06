@@ -1,6 +1,11 @@
 .env/
 venv/
-stock_advisor.log
 .env
 __pycache__
 .gradio/
+.png/
+*.png/
+artifacts/
+stock_api.log
+stock_media.log
+stock_advisor.log
